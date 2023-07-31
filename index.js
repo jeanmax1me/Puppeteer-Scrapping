@@ -1,4 +1,7 @@
+const fs = require('fs');
 const puppeteer = require('puppeteer');
+
+const MAX_PAGES = 5; // Set the maximum number of pages to scrape
 
 (async () => {
   const browser = await puppeteer.launch({ headless: false });
@@ -8,28 +11,48 @@ const puppeteer = require('puppeteer');
   await page.type('#gh-ac', 'Bose QuietComfort Noise-Cancelling');
   await page.click('input[value="Search"]');
 
-  await page.waitForSelector('span.s-item__price');
-  const prices = await page.$$eval('span.s-item__price', (spans) => {
-    return [...spans].map((span) => {
-      const priceWithComments = span.innerHTML;
-      const priceWithoutComments = priceWithComments.replace(/<!--(.*?)-->/g, '').trim();
+  const allPrices = [];
+  let totalPages = 0;
 
-      // Use regular expression to extract the actual price from the text
-      const priceRegex = /\$([0-9,]+\.[0-9]+)/;
-      const matches = priceWithoutComments.match(priceRegex);
-
-      if (matches && matches.length >= 2) {
-        return matches[1]; // Extracted price is the second element in the matches array
-      }
-
-      return null; // Return null for invalid prices
+  while (totalPages < MAX_PAGES) {
+    await page.waitForSelector('span.s-item__price');
+    const prices = await page.$$eval('span.s-item__price', (spans) => {
+      return [...spans].map((span) => {
+        const priceWithComments = span.innerHTML;
+        const priceWithoutComments = priceWithComments.replace(/<!--(.*?)-->/g, '').trim();
+        const priceRegex = /\$([0-9,]+\.[0-9]+)/;
+        const matches = priceWithoutComments.match(priceRegex);
+        if (matches && matches.length >= 2) {
+          return matches[1];
+        }
+        return null;
+      });
     });
-  });
 
-  // Filter out null values and convert prices to numbers
-  const validPrices = prices.filter((price) => price !== null).map((price) => parseFloat(price.replace(',', '')));
+    const validPrices = prices.filter((price) => price !== null).map((price) => parseFloat(price.replace(',', '')));
+    allPrices.push(...validPrices);
 
-  console.log(validPrices);
+    totalPages++;
+
+    // Click the "Next" button and wait for the next page to load
+    const nextButton = await page.$('a.pagination__next');
+    if (!nextButton) {
+      break; // If no "Next" button, break out of the loop
+    }
+
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+      page.evaluate((el) => el.click(), nextButton),
+    ]);
+  }
+
+  // Save the scraped data as a JSON file
+  const jsonData = JSON.stringify(allPrices, null, 2);
+  fs.writeFileSync('scraped_data.json', jsonData, 'utf8');
+
+  console.log('Scraped data has been written to scraped_data.json');
+  console.log('You can access the file here: ' + __dirname + '/scraped_data.json');
 
   await browser.close();
+  process.exit();
 })();
